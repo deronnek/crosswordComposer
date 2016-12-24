@@ -1,3 +1,4 @@
+import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import random
@@ -60,7 +61,7 @@ def generateGraph(overlaps):
 
 def construct_layout(list_of_overlaps):
     """Construct a layout for the given list of character overlaps. Return
-    the layout if feasibl. Return None if not possible. 
+    the layout if feasible. Return None if not possible. 
     """
 
     # First try horizontal/vertical consistency; construct a graph and
@@ -68,11 +69,11 @@ def construct_layout(list_of_overlaps):
     G = nx.Graph()
     for pair in list_of_overlaps:
         G.add_edge(pairFirstWord(pair), pairSecondWord(pair))
+
     try:
         is_vertical = nx.algorithms.bipartite.color(G)
-        
-
         return is_vertical
+
     except nx.NetworkXError:
         return None
 
@@ -137,12 +138,163 @@ def ck_maximal_independent_set(G, nodes=None):
     return indep_nodes
 
 
+def findFeasibleSet(G):
+    maximal_overlaps = ck_maximal_independent_set(G)
+    print("Maximal independent set of overlaps determined")
+    # for i in sorted(maximal_overlaps):
+    #     print(i)
+
+    # iterate over all independent sets stemming from a maximal
+    # independent set trying to find a feasible set
+    feasible_overlaps = None
+    layout = None
+    for subset_size in range(len(maximal_overlaps),0,-1):                   # Largest to smallest subsets
+        for subset in itertools.combinations(maximal_overlaps,subset_size): # All possible subsets of given size
+            layout = construct_layout(subset)
+            if layout != None:
+                print("Found feasible layout with %d overlaps" % (subset_size,))
+                feasible_overlaps = subset
+                break
+        if feasible_overlaps != None:
+            break
+        
+    if feasible_overlaps == None:
+        print("No maximal sets could be realized :(")
+        return (None, None)
+    else:
+        print("Feasible with subset:")
+        for o in feasible_overlaps:
+            print(o)
+        print(layout)
+        return (layout, feasible_overlaps)
+
+def insertWord(word, matrix, position, orientation, wordLocations):
+    first = True
+    # Will throw an exception if we run off the end of anything
+    #print("Attempting to insert",word,"at",position)
+    for i in range(len(word)):
+        if orientation == 1: # vertical; increment row
+            row, col = position[0]+i, position[1]
+        else: # horizontal; increment column
+            row, col = position[0], position[1]+i
+
+        if matrix[row][col] == ' ' or matrix[row][col] == word[i]:
+            matrix[row][col] = word[i]
+            if first:
+                wordLocations[word] = ((row,col),orientation)
+                first = False
+        else:
+            matrix[row][col] = 'X'
+            for i in range(len(matrix)):
+                print("%02d"%i,matrix[i])
+            raise Exception("Word collision trying to insert",word,"starting at",position,"colliding at",row,col,"orientation",orientation)
+
+def findPositionForWord(word, feasible_overlaps, layout, wordLocations):
+    for pair in feasible_overlaps:
+        print("Checking",pair,"for",word)
+        intersectingWord = None
+
+        if word == pairFirstWord(pair):
+            ourWord          = pairFirstWordWordIndex(pair)
+            intersectingWord = pairSecondWordWordIndex(pair)
+        if word == pairSecondWord(pair):
+            intersectingWord = pairFirstWordWordIndex(pair)
+            ourWord          = pairSecondWordWordIndex(pair)
+
+        if intersectingWord and intersectingWord[0] in wordLocations:
+            position = wordLocations[intersectingWord[0]][0]
+            orientation = wordLocations[intersectingWord[0]][1]
+
+            row,col = position[0],position[1]
+            # if orientation is 0 we need to subtract from rows
+            if orientation == 0:
+                row -= ourWord[1]
+                col += intersectingWord[1]
+            # if orientation is 1 we need to subtract from cols
+            elif orientation == 1:
+                col -= ourWord[1]
+                row += intersectingWord[1]
+            else:
+                raise Exception("WTF")
+            print("Found location for",word,"intersecting with",intersectingWord[0])
+            return (row,col)
+        elif intersectingWord:
+            print("Found",intersectingWord,"but it wasn't in the grid")
+    return None
+
+def buildCrossword(layout, feasible_overlaps, gridSize=20):
+    _, longestWord = max([(len(w),w) for w in layout])
+    matrix         = []
+    for i in range(0, gridSize):
+        row = []
+        for j in range(0, gridSize):
+            row.append(' ')
+        matrix.append(row)
+
+    intersections  = {}
+    wordLocations  = {}
+
+    # Step through words in increasing length
+    words          = sorted(list(layout.keys()), reverse=True)
+    firstWord      = True
+    for word in words: 
+        # Make sure we haven't placed this word already
+        if word in layout:
+            if firstWord:
+                position = (int(gridSize/2),int(gridSize/2))
+                firstWord = False
+            else:
+                position = findPositionForWord(word, feasible_overlaps, layout, wordLocations)
+
+            if not position:
+                print("Failed to find position for",word)
+                continue
+
+            print("Primary insertion of",word,"at",position)
+            insertWord(word, matrix, position, layout[word], wordLocations)
+
+            for pair in feasible_overlaps:
+                intersectingWord = None
+
+                if word == pairFirstWord(pair):
+                    intersectingWord = pairSecondWordWordIndex(pair)
+                    ourWord          = pairFirstWordWordIndex(pair)
+                if word == pairSecondWord(pair):
+                    intersectingWord = pairFirstWordWordIndex(pair)
+                    ourWord          = pairSecondWordWordIndex(pair)
+
+                if intersectingWord:
+                    row,col = position[0],position[1]
+                    # if orientation is 0 we need to subtract from rows
+                    if layout[word] == 0:
+                        row -= intersectingWord[1]
+                        col += ourWord[1]
+                    # if orientation is 1 we need to subtract from cols
+                    elif layout[word] == 1:
+                        col -= intersectingWord[1]
+                        row += ourWord[1]
+                    else:
+                        raise Exception("WTF")
+                    
+                    if row < 0 or col < 0:
+                        print("Went negative from:",position,"to",(row,col))
+                        exit()
+
+                    if intersectingWord[0] in layout:
+                        print("Secondary insertion of",intersectingWord[0],"at",(row,col))
+                        insertWord(intersectingWord[0], matrix, (row,col), layout[intersectingWord[0]], wordLocations)
+
+                        del(layout[intersectingWord[0]])
+            print("Known words:",wordLocations)
+            # done with this word
+            del(layout[word])
+    for row in matrix:
+        print(row)
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("usage: python ckGraphCrossword.py wordList.txt")
         sys.exit(1)
-
 
     filename = sys.argv[1]
     wordList = []
@@ -158,29 +310,6 @@ if __name__ == '__main__':
     G = generateGraph(overlaps)
     print("Graph constructed")
     # nx.draw_networkx(G);     plt.show()
-    maximal_overlaps = ck_maximal_independent_set(G)
-    print("Maximal independent set of overlaps determined")
-    # for i in sorted(maximal_overlaps):
-    #     print(i)
-
-    # iterate over all independent sets stemming from a maximal
-    # independent set trying to find a feasible set
-    feasible_overlaps = None
-    layout = None
-    for subset_size in range(len(maximal_overlaps),0,-1):                   # Largest to smallest subsets
-        for subset in itertools.combinations(maximal_overlaps,subset_size): # All possible subsets of given size
-            layout = construct_layout(subset)
-            if layout != None:
-                print("Found feasible layout with %d overlaps"%subset_size)
-                feasible_overlaps = subset
-                break
-        if feasible_overlaps != None:
-            break
-        
-    if feasible_overlaps == None:
-        print("No maximal sets could be realized :(")
-    else:
-        print("Feasible with subset:")
-        for o in feasible_overlaps:
-            print(o)
-        print(layout)
+    layout, feasible_overlaps = findFeasibleSet(G)
+    if layout:
+        buildCrossword(layout, feasible_overlaps)
